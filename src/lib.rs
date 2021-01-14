@@ -146,6 +146,7 @@ mod multiexp;
 
 use ff::PrimeField;
 
+use domain::Scalar as ScalarDomain;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -442,6 +443,18 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized {
         self.get_root().push_namespace(name_fn);
 
         Namespace(self.get_root(), PhantomData)
+    }
+
+    fn get_a(&self) -> Vec<ScalarDomain<Scalar>> {
+        vec![]
+    }
+
+    fn get_b(&self) -> Vec<ScalarDomain<Scalar>> {
+        vec![]
+    }
+
+    fn get_c(&self) -> Vec<ScalarDomain<Scalar>> {
+        vec![]
     }
 }
 

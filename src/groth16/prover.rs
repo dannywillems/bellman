@@ -12,6 +12,7 @@ use super::{ParameterSource, Proof};
 
 use crate::{Circuit, ConstraintSystem, Index, LinearCombination, SynthesisError, Variable};
 
+use crate::domain;
 use crate::domain::{EvaluationDomain, Scalar};
 
 use crate::multiexp::{multiexp, DensityTracker, FullDensity};
@@ -56,16 +57,16 @@ fn eval<S: PrimeField>(
     acc
 }
 
-pub struct ProvingAssignment<S: PrimeField> {
+struct ProvingAssignment<S: PrimeField> {
     // Density of queries
     a_aux_density: DensityTracker,
     b_input_density: DensityTracker,
     b_aux_density: DensityTracker,
 
     // Evaluations of A, B, C polynomials
-    pub a: Vec<Scalar<S>>,
-    pub b: Vec<Scalar<S>>,
-    pub c: Vec<Scalar<S>>,
+    a: Vec<Scalar<S>>,
+    b: Vec<Scalar<S>>,
+    c: Vec<Scalar<S>>,
 
     // Assignments of variables
     input_assignment: Vec<S>,
@@ -156,6 +157,18 @@ impl<S: PrimeField> ConstraintSystem<S> for ProvingAssignment<S> {
 
     fn get_root(&mut self) -> &mut Self::Root {
         self
+    }
+
+    fn get_a(&self) -> Vec<Scalar<S>> {
+        self.a.clone()
+    }
+
+    fn get_b(&self) -> Vec<Scalar<S>> {
+        self.b.clone()
+    }
+
+    fn get_c(&self) -> Vec<Scalar<S>> {
+        self.c.clone()
     }
 }
 
