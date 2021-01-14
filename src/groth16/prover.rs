@@ -56,16 +56,16 @@ fn eval<S: PrimeField>(
     acc
 }
 
-struct ProvingAssignment<S: PrimeField> {
+pub struct ProvingAssignment<S: PrimeField> {
     // Density of queries
     a_aux_density: DensityTracker,
     b_input_density: DensityTracker,
     b_aux_density: DensityTracker,
 
     // Evaluations of A, B, C polynomials
-    a: Vec<Scalar<S>>,
-    b: Vec<Scalar<S>>,
-    c: Vec<Scalar<S>>,
+    pub a: Vec<Scalar<S>>,
+    pub b: Vec<Scalar<S>>,
+    pub c: Vec<Scalar<S>>,
 
     // Assignments of variables
     input_assignment: Vec<S>,
