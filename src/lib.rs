@@ -191,7 +191,7 @@ pub enum Index {
 /// This represents a linear combination of some variables, with coefficients
 /// in the scalar field of a pairing-friendly elliptic curve group.
 #[derive(Clone)]
-pub struct LinearCombination<Scalar: PrimeField>(Vec<(Variable, Scalar)>);
+pub struct LinearCombination<Scalar: PrimeField>(pub Vec<(Variable, Scalar)>);
 
 impl<Scalar: PrimeField> AsRef<[(Variable, Scalar)]> for LinearCombination<Scalar> {
     fn as_ref(&self) -> &[(Variable, Scalar)] {
