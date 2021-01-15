@@ -445,15 +445,15 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized {
         Namespace(self.get_root(), PhantomData)
     }
 
-    fn get_a(&self) -> Vec<ScalarDomain<Scalar>> {
+    fn get_a(&self) -> Vec<LinearCombination<Scalar>> {
         vec![]
     }
 
-    fn get_b(&self) -> Vec<ScalarDomain<Scalar>> {
+    fn get_b(&self) -> Vec<LinearCombination<Scalar>> {
         vec![]
     }
 
-    fn get_c(&self) -> Vec<ScalarDomain<Scalar>> {
+    fn get_c(&self) -> Vec<LinearCombination<Scalar>> {
         vec![]
     }
 }
