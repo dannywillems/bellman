@@ -167,15 +167,15 @@ impl<S: PrimeField> ConstraintSystem<S> for ProvingAssignment<S> {
         self
     }
 
-    fn get_a(&self) -> Vec<LinearCombination<S>> {
+    default fn get_a(&self) -> Vec<LinearCombination<S>> {
         self.lc_a.clone()
     }
 
-    fn get_b(&self) -> Vec<LinearCombination<S>> {
+    default fn get_b(&self) -> Vec<LinearCombination<S>> {
         self.lc_b.clone()
     }
 
-    fn get_c(&self) -> Vec<LinearCombination<S>> {
+    default fn get_c(&self) -> Vec<LinearCombination<S>> {
         self.lc_c.clone()
     }
 }
