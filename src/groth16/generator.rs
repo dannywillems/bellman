@@ -225,6 +225,21 @@ where
         assembly.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
     }
 
+    println!("A matrice");
+    for v in assembly.get_a() {
+        println!("{:?}", v.0);
+    }
+
+    println!("B matrice");
+    for v in assembly.get_b() {
+        println!("{:?}", v.0);
+    }
+
+    println!("C matrice");
+    for v in assembly.get_c() {
+        println!("{:?}", v.0);
+    }
+
     // Create bases for blind evaluation of polynomials at tau
     let powers_of_tau = vec![Scalar::<E::Fr>(E::Fr::zero()); assembly.num_constraints];
     let mut powers_of_tau = EvaluationDomain::from_coeffs(powers_of_tau)?;

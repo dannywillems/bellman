@@ -12,7 +12,6 @@ use super::{ParameterSource, Proof};
 
 use crate::{Circuit, ConstraintSystem, Index, LinearCombination, SynthesisError, Variable};
 
-use crate::domain;
 use crate::domain::{EvaluationDomain, Scalar};
 
 use crate::multiexp::{multiexp, DensityTracker, FullDensity};
