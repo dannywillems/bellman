@@ -50,6 +50,10 @@ struct KeypairAssembly<Scalar: PrimeField> {
     at_aux: Vec<Vec<(Scalar, usize)>>,
     bt_aux: Vec<Vec<(Scalar, usize)>>,
     ct_aux: Vec<Vec<(Scalar, usize)>>,
+
+    lc_a: Vec<LinearCombination<Scalar>>,
+    lc_b: Vec<LinearCombination<Scalar>>,
+    lc_c: Vec<LinearCombination<Scalar>>,
 }
 
 impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
@@ -115,20 +119,28 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
             }
         }
 
+        let a = a(LinearCombination::zero());
+        let b = b(LinearCombination::zero());
+        let c = c(LinearCombination::zero());
+
+        self.lc_a.push(a.clone());
+        self.lc_b.push(b.clone());
+        self.lc_c.push(c.clone());
+
         eval(
-            a(LinearCombination::zero()),
+            a,
             &mut self.at_inputs,
             &mut self.at_aux,
             self.num_constraints,
         );
         eval(
-            b(LinearCombination::zero()),
+            b,
             &mut self.bt_inputs,
             &mut self.bt_aux,
             self.num_constraints,
         );
         eval(
-            c(LinearCombination::zero()),
+            c,
             &mut self.ct_inputs,
             &mut self.ct_aux,
             self.num_constraints,
@@ -151,6 +163,21 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
 
     fn get_root(&mut self) -> &mut Self::Root {
         self
+    }
+
+    fn get_a(&self) -> Vec<LinearCombination<Scalar>> {
+        println!("In the implementation");
+        self.lc_a.clone()
+    }
+
+    fn get_b(&self) -> Vec<LinearCombination<Scalar>> {
+        println!("In the implementation");
+        self.lc_b.clone()
+    }
+
+    fn get_c(&self) -> Vec<LinearCombination<Scalar>> {
+        println!("In the implementation");
+        self.lc_c.clone()
     }
 }
 
@@ -181,6 +208,9 @@ where
         at_aux: vec![],
         bt_aux: vec![],
         ct_aux: vec![],
+        lc_a: vec![],
+        lc_b: vec![],
+        lc_c: vec![],
     };
 
     // Allocate the "one" input variable

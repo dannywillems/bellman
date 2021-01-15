@@ -166,18 +166,6 @@ impl<S: PrimeField> ConstraintSystem<S> for ProvingAssignment<S> {
     fn get_root(&mut self) -> &mut Self::Root {
         self
     }
-
-    default fn get_a(&self) -> Vec<LinearCombination<S>> {
-        self.lc_a.clone()
-    }
-
-    default fn get_b(&self) -> Vec<LinearCombination<S>> {
-        self.lc_b.clone()
-    }
-
-    default fn get_c(&self) -> Vec<LinearCombination<S>> {
-        self.lc_c.clone()
-    }
 }
 
 pub fn create_random_proof<E, C, R, P: ParameterSource<E>>(

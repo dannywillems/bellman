@@ -146,7 +146,6 @@ mod multiexp;
 
 use ff::PrimeField;
 
-use domain::Scalar as ScalarDomain;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -446,17 +445,14 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized {
     }
 
     fn get_a(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the trait");
         vec![]
     }
 
     fn get_b(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the trait");
         vec![]
     }
 
     fn get_c(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the trait");
         vec![]
     }
 }
