@@ -67,10 +67,6 @@ struct ProvingAssignment<S: PrimeField> {
     b: Vec<Scalar<S>>,
     c: Vec<Scalar<S>>,
 
-    lc_a: Vec<LinearCombination<S>>,
-    lc_b: Vec<LinearCombination<S>>,
-    lc_c: Vec<LinearCombination<S>>,
-
     // Assignments of variables
     input_assignment: Vec<S>,
     aux_assignment: Vec<S>,
@@ -115,10 +111,6 @@ impl<S: PrimeField> ConstraintSystem<S> for ProvingAssignment<S> {
         let a = a(LinearCombination::zero());
         let b = b(LinearCombination::zero());
         let c = c(LinearCombination::zero());
-
-        self.lc_a.push(a.clone());
-        self.lc_b.push(b.clone());
-        self.lc_c.push(c.clone());
 
         self.a.push(Scalar(eval(
             &a,
@@ -200,9 +192,6 @@ where
         a: vec![],
         b: vec![],
         c: vec![],
-        lc_a: vec![],
-        lc_b: vec![],
-        lc_c: vec![],
         input_assignment: vec![],
         aux_assignment: vec![],
     };
