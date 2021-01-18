@@ -443,18 +443,6 @@ pub trait ConstraintSystem<Scalar: PrimeField>: Sized {
 
         Namespace(self.get_root(), PhantomData)
     }
-
-    fn get_a(&self) -> Vec<LinearCombination<Scalar>> {
-        vec![]
-    }
-
-    fn get_b(&self) -> Vec<LinearCombination<Scalar>> {
-        vec![]
-    }
-
-    fn get_c(&self) -> Vec<LinearCombination<Scalar>> {
-        vec![]
-    }
 }
 
 /// This is a "namespaced" constraint system which borrows a constraint system (pushing

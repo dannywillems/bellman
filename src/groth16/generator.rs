@@ -50,10 +50,6 @@ struct KeypairAssembly<Scalar: PrimeField> {
     at_aux: Vec<Vec<(Scalar, usize)>>,
     bt_aux: Vec<Vec<(Scalar, usize)>>,
     ct_aux: Vec<Vec<(Scalar, usize)>>,
-
-    lc_a: Vec<LinearCombination<Scalar>>,
-    lc_b: Vec<LinearCombination<Scalar>>,
-    lc_c: Vec<LinearCombination<Scalar>>,
 }
 
 impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
@@ -123,10 +119,6 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
         let b = b(LinearCombination::zero());
         let c = c(LinearCombination::zero());
 
-        self.lc_a.push(a.clone());
-        self.lc_b.push(b.clone());
-        self.lc_c.push(c.clone());
-
         eval(
             a,
             &mut self.at_inputs,
@@ -164,21 +156,6 @@ impl<Scalar: PrimeField> ConstraintSystem<Scalar> for KeypairAssembly<Scalar> {
     fn get_root(&mut self) -> &mut Self::Root {
         self
     }
-
-    fn get_a(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the implementation");
-        self.lc_a.clone()
-    }
-
-    fn get_b(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the implementation");
-        self.lc_b.clone()
-    }
-
-    fn get_c(&self) -> Vec<LinearCombination<Scalar>> {
-        println!("In the implementation");
-        self.lc_c.clone()
-    }
 }
 
 /// Create parameters for a circuit, given some toxic waste.
@@ -208,9 +185,6 @@ where
         at_aux: vec![],
         bt_aux: vec![],
         ct_aux: vec![],
-        lc_a: vec![],
-        lc_b: vec![],
-        lc_c: vec![],
     };
 
     // Allocate the "one" input variable
@@ -528,54 +502,4 @@ where
                 .collect(),
         ),
     })
-}
-
-/// Export circuit in JSON
-pub fn export_circuit<E, C>(circuit: C) -> Result<(), SynthesisError>
-where
-    E: Engine,
-    C: Circuit<E::Fr>,
-{
-    let mut assembly = KeypairAssembly {
-        num_inputs: 0,
-        num_aux: 0,
-        num_constraints: 0,
-        at_inputs: vec![],
-        bt_inputs: vec![],
-        ct_inputs: vec![],
-        at_aux: vec![],
-        bt_aux: vec![],
-        ct_aux: vec![],
-        lc_a: vec![],
-        lc_b: vec![],
-        lc_c: vec![],
-    };
-
-    // Allocate the "one" input variable
-    assembly.alloc_input(|| "", || Ok(E::Fr::one()))?;
-
-    // Synthesize the circuit.
-    circuit.synthesize(&mut assembly)?;
-
-    // Input constraints to ensure full density of IC query
-    // x * 0 = 0
-    for i in 0..assembly.num_inputs {
-        assembly.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
-    }
-
-    println!("A matrice");
-    for v in assembly.get_a() {
-        println!("{:?}", v.0);
-    }
-
-    println!("B matrice");
-    for v in assembly.get_b() {
-        println!("{:?}", v.0);
-    }
-
-    println!("C matrice");
-    for v in assembly.get_c() {
-        println!("{:?}", v.0);
-    }
-    Ok(())
 }
