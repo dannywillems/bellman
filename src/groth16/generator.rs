@@ -225,21 +225,6 @@ where
         assembly.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
     }
 
-    println!("A matrice");
-    for v in assembly.get_a() {
-        println!("{:?}", v.0);
-    }
-
-    println!("B matrice");
-    for v in assembly.get_b() {
-        println!("{:?}", v.0);
-    }
-
-    println!("C matrice");
-    for v in assembly.get_c() {
-        println!("{:?}", v.0);
-    }
-
     // Create bases for blind evaluation of polynomials at tau
     let powers_of_tau = vec![Scalar::<E::Fr>(E::Fr::zero()); assembly.num_constraints];
     let mut powers_of_tau = EvaluationDomain::from_coeffs(powers_of_tau)?;
@@ -543,4 +528,54 @@ where
                 .collect(),
         ),
     })
+}
+
+/// Export circuit in JSON
+pub fn export_circuit<E, C>(circuit: C) -> Result<(), SynthesisError>
+where
+    E: Engine,
+    C: Circuit<E::Fr>,
+{
+    let mut assembly = KeypairAssembly {
+        num_inputs: 0,
+        num_aux: 0,
+        num_constraints: 0,
+        at_inputs: vec![],
+        bt_inputs: vec![],
+        ct_inputs: vec![],
+        at_aux: vec![],
+        bt_aux: vec![],
+        ct_aux: vec![],
+        lc_a: vec![],
+        lc_b: vec![],
+        lc_c: vec![],
+    };
+
+    // Allocate the "one" input variable
+    assembly.alloc_input(|| "", || Ok(E::Fr::one()))?;
+
+    // Synthesize the circuit.
+    circuit.synthesize(&mut assembly)?;
+
+    // Input constraints to ensure full density of IC query
+    // x * 0 = 0
+    for i in 0..assembly.num_inputs {
+        assembly.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
+    }
+
+    println!("A matrice");
+    for v in assembly.get_a() {
+        println!("{:?}", v.0);
+    }
+
+    println!("B matrice");
+    for v in assembly.get_b() {
+        println!("{:?}", v.0);
+    }
+
+    println!("C matrice");
+    for v in assembly.get_c() {
+        println!("{:?}", v.0);
+    }
+    Ok(())
 }
