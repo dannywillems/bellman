@@ -15,9 +15,8 @@ use std::sync::Arc;
 #[cfg(test)]
 mod tests;
 
-pub mod exporter;
 mod generator;
-pub mod prover;
+mod prover;
 mod verifier;
 
 pub use self::generator::*;
