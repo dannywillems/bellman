@@ -16,9 +16,14 @@
 //! keep batches of each statement type, vs one large adaptive batch.
 //!
 //! Each verification gives one proof the weight one, and every other proof an independent
-//! uniform nonzero scalar weight. Serial and multicore verification use the same
-//! distribution, with a false-acceptance bound of `1 / (r - 1)` for scalar-field
-//! order `r`. A batch whose only invalid proof has the unit weight is always rejected.
+//! weight drawn uniformly from `1..=2^128 - 1` (or uniformly from the nonzero
+//! scalars, if the scalar field has at most 128 bits). A batch containing any
+//! invalid proof is accepted with probability at most `1 / (2^128 - 1)` (or
+//! `1 / (r - 1)` for a scalar field of order `r < 2^128`), however many of its proofs
+//! are invalid: the batch equation holds in a group of prime order `r`, so once every
+//! other weight is fixed, at most one weight of an invalid, randomly weighted proof
+//! satisfies it. A batch whose only invalid proof has the unit weight is always
+//! rejected.
 //!
 //! Proofs, public inputs and verifying keys are public, and the weights only need to
 //! be unpredictable until the proofs are fixed, so this module uses variable-time
@@ -45,16 +50,24 @@ use rayon::{
 
 use crate::{PreparedVerifyingKey, Proof, VerifyingKey};
 
-/// Samples a uniformly random nonzero scalar for batch verification.
+/// Samples a random batch weight, as described in the module documentation.
 fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
     // The spec is explicit that `z != 0`; a zero weight would remove
     // its proof from the batch equation. `Field::random` is defined to
-    // return a uniformly-random field element (which may be 0), so we
+    // return a uniformly-random field element (which may be 0), and
+    // `rng.fill_bytes()` can return the all-zeros byte array. So we
     // loop until it's not, avoiding needing an assert or throwing an
     // error through no fault of the batch items. This will likely never
     // actually loop, but handles the edge case.
     loop {
-        let weight = F::random(&mut *rng);
+        let weight = if F::NUM_BITS > 128 {
+            // The field order exceeds 2^128, so these integers are distinct scalars.
+            let mut bytes = [0; 16];
+            rng.fill_bytes(&mut bytes);
+            F::from_u128(u128::from_le_bytes(bytes))
+        } else {
+            F::random(&mut *rng)
+        };
         if !weight.is_zero_vartime() {
             return weight;
         }
@@ -584,8 +597,9 @@ where
             .enumerate()
             .map(|(chunk, items)| {
                 let mut rng = UnwrapErr(SysRng);
-                // Exactly one item in the whole batch has the unit weight. Other weights
-                // are independent, rather than powers of one random value.
+                // Exactly one item in the whole batch has the unit weight. Other weights are
+                // independent, rather than powers of one random value, so that they stay 128
+                // bits long and keep the serial bound.
                 let weights = (0..items.len())
                     .map(|i| {
                         if chunk == 0 && i == 0 {
