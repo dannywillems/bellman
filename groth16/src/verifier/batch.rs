@@ -14,6 +14,10 @@
 //! need to refer to or lookup a particular `VerifyingKey`. In practice, with
 //! large enough batches, it's manageable and not much worse performance-wise to
 //! keep batches of each statement type, vs one large adaptive batch.
+//!
+//! Proofs, public inputs and verifying keys are public, and the weights only need to
+//! be unpredictable until the proofs are fixed, so this module uses variable-time
+//! arithmetic.
 
 use std::{borrow::Cow, ops::AddAssign};
 
@@ -49,6 +53,95 @@ fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
     }
 }
 
+/// Returns the width-4 NAF digits of a little-endian integer, least significant first,
+/// without trailing zeros.
+pub(crate) fn wnaf(bytes: &[u8]) -> Vec<i8> {
+    let bit = |i: usize| bytes.get(i / 8).map_or(0, |byte| (byte >> (i % 8)) & 1);
+    let mut digits = Vec::with_capacity(8 * bytes.len() + 4);
+    let mut carry = 0;
+    let mut i = 0;
+    // The position after the last byte absorbs a final carry.
+    while i <= 8 * bytes.len() {
+        let window = carry + (0..4).map(|k| bit(i + k) << k).sum::<u8>();
+        if window % 2 == 0 {
+            digits.push(0);
+            i += 1;
+        } else {
+            // Every nonzero digit is odd, in -7..=7, and followed by three zeros.
+            let digit = i8::try_from(window).expect("windows are at most 16");
+            let digit = if window < 8 {
+                carry = 0;
+                digit
+            } else {
+                carry = 1;
+                digit - 16
+            };
+            digits.extend([digit, 0, 0, 0]);
+            i += 4;
+        }
+    }
+    while digits.last() == Some(&0) {
+        digits.pop();
+    }
+    digits
+}
+
+/// Returns whether `to_repr()` encodes scalars as little-endian integers.
+///
+/// Fields too small to represent the 64-bit probe value return `false`, so they use the
+/// group's own multiplication.
+pub(crate) fn is_little_endian<F: PrimeField>() -> bool {
+    let probe = F::from(0x0807_0605_0403_0201).to_repr();
+    let probe = probe.as_ref();
+    probe.starts_with(&[1, 2, 3, 4, 5, 6, 7, 8]) && probe[8..].iter().all(|&byte| byte == 0)
+}
+
+/// Computes `sum(bases[i] * scalars[i])` in variable time.
+///
+/// Little-endian scalar encodings use interleaved wNAF, so all terms share one sequence
+/// of doublings. Other encodings use the group's own multiplication.
+pub(crate) fn multiexp_vartime<G: Group>(bases: &[G], scalars: &[G::Scalar]) -> G {
+    if !is_little_endian::<G::Scalar>() {
+        return bases
+            .iter()
+            .zip(scalars)
+            .map(|(base, scalar)| *base * scalar)
+            .sum();
+    }
+
+    // Odd multiples of each base, from one to seven times.
+    let tables = bases
+        .iter()
+        .map(|&base| {
+            let double = base.double();
+            let mut table = [base; 4];
+            for i in 1..4 {
+                table[i] = table[i - 1] + double;
+            }
+            table
+        })
+        .collect::<Vec<_>>();
+    let digits = scalars
+        .iter()
+        .map(|scalar| wnaf(scalar.to_repr().as_ref()))
+        .collect::<Vec<_>>();
+
+    let mut sum = G::identity();
+    for i in (0..digits.iter().map(Vec::len).max().unwrap_or(0)).rev() {
+        sum = sum.double();
+        for (table, digits) in tables.iter().zip(&digits) {
+            let digit = digits.get(i).copied().unwrap_or(0);
+            let term = &table[usize::from(digit.unsigned_abs() / 2)];
+            match digit.signum() {
+                1 => sum += term,
+                -1 => sum -= term,
+                _ => {}
+            }
+        }
+    }
+    sum
+}
+
 /// Weighs batch items, returning their Miller loop terms, the weighted sums of their public
 /// inputs, and the weighted sum of their `C` points.
 ///
@@ -61,18 +154,21 @@ fn weigh<E: MultiMillerLoop>(
 ) -> (Vec<E::G1>, Vec<E::G2Prepared>, Vec<E::Fr>, E::G1) {
     let mut a = Vec::with_capacity(items.len());
     let mut b = Vec::with_capacity(items.len());
-    let mut delta = E::G1::identity();
+    let mut c = Vec::with_capacity(items.len());
     let mut gammas = vec![E::Fr::ZERO; ic_len];
     for (Item { proof, inputs }, weight) in items.iter().zip(weights) {
-        a.push(proof.a * weight);
+        a.push(multiexp_vartime(
+            &[proof.a.to_curve()],
+            std::slice::from_ref(weight),
+        ));
         b.push((-proof.b).into());
-        delta += proof.c * weight;
+        c.push(proof.c.to_curve());
         gammas[0] += weight; // a_0 is implicitly set to 1
         for (input, gamma) in inputs.iter().zip(&mut gammas[1..]) {
             *gamma += *weight * input;
         }
     }
-    (a, b, gammas, delta)
+    (a, b, gammas, multiexp_vartime(&c, weights))
 }
 
 /// Returns the G1 terms that pair the batch sums with the verifying key.
@@ -81,12 +177,8 @@ fn shared_terms<E: MultiMillerLoop>(
     gammas: &[E::Fr],
     delta: E::G1,
 ) -> [E::G1; 3] {
-    let psi = vk
-        .ic
-        .iter()
-        .zip(gammas)
-        .map(|(&psi_i, gamma_i)| psi_i * gamma_i)
-        .sum();
+    let ic = vk.ic.iter().map(|ic| ic.to_curve()).collect::<Vec<_>>();
+    let psi = multiexp_vartime(&ic, gammas);
     // Covers the [acc_Y]⋅e(alpha_g1, beta_g2) component, where acc_Y
     // is the sum of the weights (implicitly collected as `gammas[0]`).
     //
@@ -97,7 +189,7 @@ fn shared_terms<E: MultiMillerLoop>(
     //     ([acc_Y]⋅alpha_g1, beta_g2)
     // to our Miller loop terms because
     //     [acc_Y]⋅e(alpha_g1, beta_g2) = e([acc_Y]⋅alpha_g1, beta_g2)
-    let alpha = vk.alpha_g1 * gammas[0];
+    let alpha = multiexp_vartime(&[vk.alpha_g1.to_curve()], &gammas[..1]);
     [delta, psi, alpha]
 }
 
