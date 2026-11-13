@@ -48,7 +48,7 @@ use rayon::{
     prelude::ParallelSlice,
 };
 
-use crate::{PreparedVerifyingKey, Proof, VerifyingKey};
+use crate::{PreparedVerifyingKey, Proof, VerifyingKey, multiexp::multiexp_vartime};
 
 /// Samples a random batch weight, as described in the module documentation.
 fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
@@ -72,95 +72,6 @@ fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
             return weight;
         }
     }
-}
-
-/// Returns the width-4 NAF digits of a little-endian integer, least significant first,
-/// without trailing zeros.
-pub(crate) fn wnaf(bytes: &[u8]) -> Vec<i8> {
-    let bit = |i: usize| bytes.get(i / 8).map_or(0, |byte| (byte >> (i % 8)) & 1);
-    let mut digits = Vec::with_capacity(8 * bytes.len() + 4);
-    let mut carry = 0;
-    let mut i = 0;
-    // The position after the last byte absorbs a final carry.
-    while i <= 8 * bytes.len() {
-        let window = carry + (0..4).map(|k| bit(i + k) << k).sum::<u8>();
-        if window % 2 == 0 {
-            digits.push(0);
-            i += 1;
-        } else {
-            // Every nonzero digit is odd, in -7..=7, and followed by three zeros.
-            let digit = i8::try_from(window).expect("windows are at most 16");
-            let digit = if window < 8 {
-                carry = 0;
-                digit
-            } else {
-                carry = 1;
-                digit - 16
-            };
-            digits.extend([digit, 0, 0, 0]);
-            i += 4;
-        }
-    }
-    while digits.last() == Some(&0) {
-        digits.pop();
-    }
-    digits
-}
-
-/// Returns whether `to_repr()` encodes scalars as little-endian integers.
-///
-/// Fields too small to represent the 64-bit probe value return `false`, so they use the
-/// group's own multiplication.
-pub(crate) fn is_little_endian<F: PrimeField>() -> bool {
-    let probe = F::from(0x0807_0605_0403_0201).to_repr();
-    let probe = probe.as_ref();
-    probe.starts_with(&[1, 2, 3, 4, 5, 6, 7, 8]) && probe[8..].iter().all(|&byte| byte == 0)
-}
-
-/// Computes `sum(bases[i] * scalars[i])` in variable time.
-///
-/// Little-endian scalar encodings use interleaved wNAF, so all terms share one sequence
-/// of doublings. Other encodings use the group's own multiplication.
-pub(crate) fn multiexp_vartime<G: Group>(bases: &[G], scalars: &[G::Scalar]) -> G {
-    if !is_little_endian::<G::Scalar>() {
-        return bases
-            .iter()
-            .zip(scalars)
-            .map(|(base, scalar)| *base * scalar)
-            .sum();
-    }
-
-    // Odd multiples of each base, from one to seven times.
-    let tables = bases
-        .iter()
-        .map(|&base| {
-            let double = base.double();
-            let mut table = [base; 4];
-            for i in 1..4 {
-                table[i] = table[i - 1] + double;
-            }
-            table
-        })
-        .collect::<Vec<_>>();
-    let digits = scalars
-        .iter()
-        .map(|scalar| wnaf(scalar.to_repr().as_ref()))
-        .collect::<Vec<_>>();
-
-    let mut sum = G::identity();
-    for i in (0..digits.iter().map(Vec::len).max().unwrap_or(0)).rev() {
-        sum = sum.double();
-        for (table, digits) in tables.iter().zip(&digits) {
-            let digit = digits.get(i).copied().unwrap_or(0);
-            let term = &table[usize::from(digit.unsigned_abs() / 2)];
-            match digit.signum() {
-                1 => sum += term,
-                -1 => sum -= term,
-                _ => {}
-            }
-        }
-    }
-    sum
 }
 
 /// Weighs batch items, returning their Miller loop terms, the weighted sums of their public
