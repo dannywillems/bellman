@@ -93,44 +93,48 @@ fn weigh<E: MultiMillerLoop>(
     ic_len: usize,
 ) -> (Vec<E::G1>, Vec<E::G2Prepared>, Vec<E::Fr>, E::G1) {
     let mut a = Vec::with_capacity(items.len());
-    let mut b = Vec::with_capacity(items.len());
+    let mut neg_b = Vec::with_capacity(items.len());
     let mut c = Vec::with_capacity(items.len());
-    let mut gammas = vec![E::Fr::ZERO; ic_len];
+    let mut ic_scalars = vec![E::Fr::ZERO; ic_len];
     for (Item { proof, inputs }, weight) in items.iter().zip(weights) {
         a.push(multiexp_vartime(
             &[proof.a.to_curve()],
             std::slice::from_ref(weight),
         ));
-        b.push((-proof.b).into());
+        neg_b.push((-proof.b).into());
         c.push(proof.c.to_curve());
-        gammas[0] += weight; // a_0 is implicitly set to 1
-        for (input, gamma) in inputs.iter().zip(&mut gammas[1..]) {
-            *gamma += *weight * input;
+        ic_scalars[0] += weight; // a_0 is implicitly set to 1
+        for (input, ic_scalar) in inputs.iter().zip(&mut ic_scalars[1..]) {
+            *ic_scalar += *weight * input;
         }
     }
-    (a, b, gammas, multiexp_vartime(&c, weights))
+    (a, neg_b, ic_scalars, multiexp_vartime(&c, weights))
 }
 
 /// Returns the G1 terms that pair the batch sums with the verifying key.
+///
+/// `ic_scalars[i]` multiplies `vk.ic[i]`, and `c_sum` is the weighted sum of the
+/// proofs' `C` points.
 fn shared_terms<E: MultiMillerLoop>(
     vk: &VerifyingKey<E>,
-    gammas: &[E::Fr],
-    delta: E::G1,
+    ic_scalars: &[E::Fr],
+    c_sum: E::G1,
 ) -> [E::G1; 3] {
     let ic = vk.ic.iter().map(|ic| ic.to_curve()).collect::<Vec<_>>();
-    let psi = multiexp_vartime(&ic, gammas);
-    // Covers the [acc_Y]⋅e(alpha_g1, beta_g2) component, where acc_Y
-    // is the sum of the weights (implicitly collected as `gammas[0]`).
+    let psi = multiexp_vartime(&ic, ic_scalars);
+    // The first public input is implicitly one, so its scalar is the sum of the weights.
+    let weight_sum = ic_scalars[0];
+    // Covers the [weight_sum] e(alpha_g1, beta_g2) component.
     //
-    // The multiplication by acc_Y is expensive -- it involves
-    // exponentiating by acc_Y because the result of the pairing is an
+    // The multiplication by weight_sum is expensive -- it involves
+    // exponentiating by weight_sum because the result of the pairing is an
     // element of a multiplicative subgroup of a large extension field.
     // Instead, we add
-    //     ([acc_Y]⋅alpha_g1, beta_g2)
+    //     ([weight_sum] alpha_g1, beta_g2)
     // to our Miller loop terms because
-    //     [acc_Y]⋅e(alpha_g1, beta_g2) = e([acc_Y]⋅alpha_g1, beta_g2)
-    let alpha = multiexp_vartime(&[vk.alpha_g1.to_curve()], &gammas[..1]);
-    [delta, psi, alpha]
+    //     [weight_sum] e(alpha_g1, beta_g2) = e([weight_sum] alpha_g1, beta_g2)
+    let alpha = multiexp_vartime(&[vk.alpha_g1.to_curve()], &[weight_sum]);
+    [c_sum, psi, alpha]
 }
 
 /// Runs a Miller loop, normalizing all G1 points with one shared inversion.
@@ -239,12 +243,12 @@ pub struct PreparedBatchVerifyingKey<'a, E: MultiMillerLoop> {
 
 struct PreparedBatchTerms<E: MultiMillerLoop> {
     g1: Vec<E::G1>,
-    variable_g2: Vec<E::G2Prepared>,
+    neg_b: Vec<E::G2Prepared>,
 }
 
 impl<E: MultiMillerLoop> PreparedBatchTerms<E> {
     fn with_key<'a>(&'a self, key: &'a PreparedBatchVerifyingKey<'_, E>) -> Vec<&'a E::G2Prepared> {
-        let mut terms = self.variable_g2.iter().collect::<Vec<_>>();
+        let mut terms = self.neg_b.iter().collect::<Vec<_>>();
         terms.extend([&key.g2.delta_g2, &key.g2.gamma_g2, &key.g2.beta_g2]);
         terms
     }
@@ -434,10 +438,10 @@ where
                 }
             })
             .collect::<Vec<_>>();
-        let (mut g1, variable_g2, gammas, delta) = weigh(&self.items, &weights, pvk.vk.ic.len());
-        g1.extend(shared_terms(pvk.vk, &gammas, delta));
+        let (mut g1, neg_b, ic_scalars, c_sum) = weigh(&self.items, &weights, pvk.vk.ic.len());
+        g1.extend(shared_terms(pvk.vk, &ic_scalars, c_sum));
 
-        PreparedBatchTerms { g1, variable_g2 }
+        PreparedBatchTerms { g1, neg_b }
     }
 
     /// Perform batch verification using the global Rayon thread pool.
@@ -487,16 +491,16 @@ where
     ) -> Result<(), VerificationError> {
         let vk = pvk.vk;
         struct Accumulator<E: MultiMillerLoop> {
-            gammas: Vec<E::Fr>,
-            delta: E::G1,
+            ic_scalars: Vec<E::Fr>,
+            c_sum: E::G1,
             ml_result: Option<E::Result>,
         }
 
         impl<E: MultiMillerLoop> Accumulator<E> {
             fn new(ic_len: usize) -> Self {
                 Accumulator {
-                    gammas: vec![E::Fr::ZERO; ic_len],
-                    delta: E::G1::identity(),
+                    ic_scalars: vec![E::Fr::ZERO; ic_len],
+                    c_sum: E::G1::identity(),
                     ml_result: None,
                 }
             }
@@ -528,21 +532,21 @@ where
                         }
                     })
                     .collect::<Vec<_>>();
-                let (g1, g2, gammas, delta) = weigh(items, &weights, ic_len);
-                let g2 = g2.iter().collect::<Vec<_>>();
+                let (g1, neg_b, ic_scalars, c_sum) = weigh(items, &weights, ic_len);
+                let g2 = neg_b.iter().collect::<Vec<_>>();
                 Accumulator {
-                    gammas,
-                    delta,
+                    ic_scalars,
+                    c_sum,
                     ml_result: Some(miller_loop::<E>(&g1, &g2)),
                 }
             })
             .reduce(
                 || Accumulator::<E>::new(ic_len),
                 |mut a, b| {
-                    for (a, b) in a.gammas.iter_mut().zip(b.gammas.into_iter()) {
+                    for (a, b) in a.ic_scalars.iter_mut().zip(b.ic_scalars.into_iter()) {
                         *a += b;
                     }
-                    a.delta += b.delta;
+                    a.c_sum += b.c_sum;
                     a.ml_result = match (a.ml_result, b.ml_result) {
                         (Some(a), Some(b)) => Some(a + b),
                         (Some(a), None) | (None, Some(a)) => Some(a),
@@ -555,7 +559,7 @@ where
         match acc.ml_result {
             None => Ok(()),
             Some(mut ml_result) => {
-                let g1 = shared_terms(vk, &acc.gammas, acc.delta);
+                let g1 = shared_terms(vk, &acc.ic_scalars, acc.c_sum);
                 let g2 = [&pvk.g2.delta_g2, &pvk.g2.gamma_g2, &pvk.g2.beta_g2];
                 ml_result += miller_loop::<E>(&g1, &g2);
 
