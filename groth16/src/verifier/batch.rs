@@ -82,20 +82,60 @@ fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
     }
 }
 
-/// Weighs batch items, returning their Miller loop terms, the weighted sums of their public
-/// inputs, and the weighted sum of their `C` points.
-///
-/// The first public input is implicitly one, so its weighted sum is the sum of the weights.
-#[allow(clippy::type_complexity)]
+/// Weighted sums of a batch, which are paired with the verifying key.
+struct WeightedSums<E: MultiMillerLoop> {
+    /// `ic_scalars[i]` multiplies `vk.ic[i]`.
+    ///
+    /// The first public input is implicitly one, so `ic_scalars[0]` is the sum of the
+    /// weights.
+    ic_scalars: Vec<E::Fr>,
+    /// Weighted sum of the proofs' `C` points.
+    c_sum: E::G1,
+}
+
+impl<E: MultiMillerLoop> WeightedSums<E> {
+    fn new(ic_len: usize) -> Self {
+        WeightedSums {
+            ic_scalars: vec![E::Fr::ZERO; ic_len],
+            c_sum: E::G1::identity(),
+        }
+    }
+
+    fn weight_sum(&self) -> E::Fr {
+        self.ic_scalars[0]
+    }
+}
+
+impl<E: MultiMillerLoop> AddAssign for WeightedSums<E> {
+    fn add_assign(&mut self, other: Self) {
+        debug_assert_eq!(self.ic_scalars.len(), other.ic_scalars.len());
+        for (a, b) in self.ic_scalars.iter_mut().zip(other.ic_scalars) {
+            *a += b;
+        }
+        self.c_sum += other.c_sum;
+    }
+}
+
+/// A weighted batch: the per-proof Miller loop inputs, and the sums paired with the
+/// verifying key.
+struct WeightedBatch<E: MultiMillerLoop> {
+    /// `[weight] A` for each proof.
+    a: Vec<E::G1>,
+    /// `-B` for each proof.
+    neg_b: Vec<E::G2Prepared>,
+    sums: WeightedSums<E>,
+}
+
+/// Weighs batch items.
 fn weigh<E: MultiMillerLoop>(
     items: &[Item<E>],
     weights: &[E::Fr],
     ic_len: usize,
-) -> (Vec<E::G1>, Vec<E::G2Prepared>, Vec<E::Fr>, E::G1) {
+) -> WeightedBatch<E> {
     let mut a = Vec::with_capacity(items.len());
     let mut neg_b = Vec::with_capacity(items.len());
     let mut c = Vec::with_capacity(items.len());
-    let mut ic_scalars = vec![E::Fr::ZERO; ic_len];
+    let mut sums = WeightedSums::new(ic_len);
     for (Item { proof, inputs }, weight) in items.iter().zip(weights) {
         a.push(multiexp_vartime(
             &[proof.a.to_curve()],
@@ -103,27 +143,20 @@ fn weigh<E: MultiMillerLoop>(
         ));
         neg_b.push((-proof.b).into());
         c.push(proof.c.to_curve());
-        ic_scalars[0] += weight; // a_0 is implicitly set to 1
-        for (input, ic_scalar) in inputs.iter().zip(&mut ic_scalars[1..]) {
+        sums.ic_scalars[0] += weight; // a_0 is implicitly set to 1
+        for (input, ic_scalar) in inputs.iter().zip(&mut sums.ic_scalars[1..]) {
             *ic_scalar += *weight * input;
         }
     }
-    (a, neg_b, ic_scalars, multiexp_vartime(&c, weights))
+    sums.c_sum = multiexp_vartime(&c, weights);
+    WeightedBatch { a, neg_b, sums }
 }
 
 /// Returns the G1 terms that pair the batch sums with the verifying key.
-///
-/// `ic_scalars[i]` multiplies `vk.ic[i]`, and `c_sum` is the weighted sum of the
-/// proofs' `C` points.
-fn shared_terms<E: MultiMillerLoop>(
-    vk: &VerifyingKey<E>,
-    ic_scalars: &[E::Fr],
-    c_sum: E::G1,
-) -> [E::G1; 3] {
+fn shared_terms<E: MultiMillerLoop>(vk: &VerifyingKey<E>, sums: &WeightedSums<E>) -> [E::G1; 3] {
     let ic = vk.ic.iter().map(|ic| ic.to_curve()).collect::<Vec<_>>();
-    let psi = multiexp_vartime(&ic, ic_scalars);
-    // The first public input is implicitly one, so its scalar is the sum of the weights.
-    let weight_sum = ic_scalars[0];
+    let psi = multiexp_vartime(&ic, &sums.ic_scalars);
+    let weight_sum = sums.weight_sum();
     // Covers the [weight_sum] e(alpha_g1, beta_g2) component.
     //
     // The multiplication by weight_sum is expensive -- it involves
@@ -134,7 +167,7 @@ fn shared_terms<E: MultiMillerLoop>(
     // to our Miller loop terms because
     //     [weight_sum] e(alpha_g1, beta_g2) = e([weight_sum] alpha_g1, beta_g2)
     let alpha = multiexp_vartime(&[vk.alpha_g1.to_curve()], &[weight_sum]);
-    [c_sum, psi, alpha]
+    [sums.c_sum, psi, alpha]
 }
 
 /// Runs a Miller loop, normalizing all G1 points with one shared inversion.
@@ -438,10 +471,10 @@ where
                 }
             })
             .collect::<Vec<_>>();
-        let (mut g1, neg_b, ic_scalars, c_sum) = weigh(&self.items, &weights, pvk.vk.ic.len());
-        g1.extend(shared_terms(pvk.vk, &ic_scalars, c_sum));
+        let WeightedBatch { mut a, neg_b, sums } = weigh(&self.items, &weights, pvk.vk.ic.len());
+        a.extend(shared_terms(pvk.vk, &sums));
 
-        PreparedBatchTerms { g1, neg_b }
+        PreparedBatchTerms { g1: a, neg_b }
     }
 
     /// Perform batch verification using the global Rayon thread pool.
@@ -491,16 +524,14 @@ where
     ) -> Result<(), VerificationError> {
         let vk = pvk.vk;
         struct Accumulator<E: MultiMillerLoop> {
-            ic_scalars: Vec<E::Fr>,
-            c_sum: E::G1,
+            sums: WeightedSums<E>,
             ml_result: Option<E::Result>,
         }
 
         impl<E: MultiMillerLoop> Accumulator<E> {
             fn new(ic_len: usize) -> Self {
                 Accumulator {
-                    ic_scalars: vec![E::Fr::ZERO; ic_len],
-                    c_sum: E::G1::identity(),
+                    sums: WeightedSums::new(ic_len),
                     ml_result: None,
                 }
             }
@@ -532,21 +563,17 @@ where
                         }
                     })
                     .collect::<Vec<_>>();
-                let (g1, neg_b, ic_scalars, c_sum) = weigh(items, &weights, ic_len);
-                let g2 = neg_b.iter().collect::<Vec<_>>();
+                let batch = weigh(items, &weights, ic_len);
+                let g2 = batch.neg_b.iter().collect::<Vec<_>>();
                 Accumulator {
-                    ic_scalars,
-                    c_sum,
-                    ml_result: Some(miller_loop::<E>(&g1, &g2)),
+                    ml_result: Some(miller_loop::<E>(&batch.a, &g2)),
+                    sums: batch.sums,
                 }
             })
             .reduce(
                 || Accumulator::<E>::new(ic_len),
                 |mut a, b| {
-                    for (a, b) in a.ic_scalars.iter_mut().zip(b.ic_scalars.into_iter()) {
-                        *a += b;
-                    }
-                    a.c_sum += b.c_sum;
+                    a.sums += b.sums;
                     a.ml_result = match (a.ml_result, b.ml_result) {
                         (Some(a), Some(b)) => Some(a + b),
                         (Some(a), None) | (None, Some(a)) => Some(a),
@@ -559,7 +586,7 @@ where
         match acc.ml_result {
             None => Ok(()),
             Some(mut ml_result) => {
-                let g1 = shared_terms(vk, &acc.ic_scalars, acc.c_sum);
+                let g1 = shared_terms(vk, &acc.sums);
                 let g2 = [&pvk.g2.delta_g2, &pvk.g2.gamma_g2, &pvk.g2.beta_g2];
                 ml_result += miller_loop::<E>(&g1, &g2);
 
