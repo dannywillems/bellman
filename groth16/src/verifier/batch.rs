@@ -50,19 +50,27 @@ use rayon::{
 
 use crate::{PreparedVerifyingKey, Proof, VerifyingKey, multiexp::multiexp_vartime};
 
+/// Bit length of the random batch weights, for scalar fields wider than this.
+///
+/// It bounds the probability of accepting a batch containing an invalid proof by
+/// `1 / (2^WEIGHT_BITS - 1)`, as described in the module documentation.
+const WEIGHT_BITS: u32 = 128;
+
+// Random weights are sampled as `u128` integers.
+const _: () = assert!(WEIGHT_BITS == u128::BITS);
+
 /// Samples a random batch weight, as described in the module documentation.
 fn random_weight<F: PrimeField>(rng: &mut impl Rng) -> F {
-    // The spec is explicit that `z != 0`; a zero weight would remove
-    // its proof from the batch equation. `Field::random` is defined to
+    // A zero weight would remove its proof from the batch equation. `Field::random` is defined to
     // return a uniformly-random field element (which may be 0), and
     // `rng.fill_bytes()` can return the all-zeros byte array. So we
     // loop until it's not, avoiding needing an assert or throwing an
     // error through no fault of the batch items. This will likely never
     // actually loop, but handles the edge case.
     loop {
-        let weight = if F::NUM_BITS > 128 {
-            // The field order exceeds 2^128, so these integers are distinct scalars.
-            let mut bytes = [0; 16];
+        let weight = if F::NUM_BITS > WEIGHT_BITS {
+            // The field order exceeds 2^WEIGHT_BITS, so these integers are distinct scalars.
+            let mut bytes = [0; size_of::<u128>()];
             rng.fill_bytes(&mut bytes);
             F::from_u128(u128::from_le_bytes(bytes))
         } else {
